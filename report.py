@@ -89,7 +89,7 @@ def fmt(label, data):
 
 
 def build_section(title, date_from, date_to):
-    meta_data = fetch_windsor("facebook", date_from, date_to)
+    meta_data = fetch_windsor("facebook_ads", date_from, date_to)
     google_data = fetch_windsor("google_ads", date_from, date_to)
 
     meta = agg(meta_data)
