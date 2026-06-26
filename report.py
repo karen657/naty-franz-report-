@@ -8,22 +8,17 @@ SLACK_CHANNEL = "p-natyfranz-ecommerce"
 
 today = datetime.today()
 
-# Semana pasada: lunes → domingo
 last_monday = today - timedelta(days=today.weekday() + 7)
 last_sunday = last_monday + timedelta(days=6)
-
-# Mes en curso: día 1 → hoy
 month_start = today.replace(day=1)
 
-METRICS = ["spend", "conversions", "conversion_value", "cpa", "roas"]
-DIMENSIONS = ["source", "channel"]
+METRICS = ["spend", "conversions", "conversion_value"]
+DIMENSIONS = ["source", "channel", "account_name"]
 
-
-def fetch_windsor(connector, date_from, date_to):
+def fetch_windsor(date_from, date_to):
     url = "https://connectors.windsor.ai/all"
     params = {
         "api_key": WINDSOR_API_KEY,
-        "connector": connector,
         "date_from": date_from,
         "date_to": date_to,
         "fields": ",".join(DIMENSIONS + METRICS),
@@ -31,11 +26,22 @@ def fetch_windsor(connector, date_from, date_to):
     }
     r = requests.get(url, params=params, timeout=30)
     r.raise_for_status()
-    return r.json().get("data", [])
+    rows = r.json().get("data", [])
+    print(f"Rows recibidas: {len(rows)}")
+    print(rows[:5])
+    return rows
 
+def is_meta(row):
+    txt = f"{row.get('source','')} {row.get('channel','')}".lower()
+    return any(x in txt for x in ["facebook", "meta", "instagram"])
+
+def is_google(row):
+    txt = f"{row.get('source','')} {row.get('channel','')}".lower()
+    return "google" in txt
 
 def agg(rows):
     spend = conversions = conv_value = 0
+
     for row in rows:
         spend += float(row.get("spend") or 0)
         conversions += float(row.get("conversions") or 0)
@@ -52,7 +58,6 @@ def agg(rows):
         "roas": roas,
     }
 
-
 def fmt(label, d):
     return (
         f"*{label}*\n"
@@ -63,10 +68,11 @@ def fmt(label, d):
         f"  📈 ROAS: {d['roas']:.2f}x\n"
     )
 
-
 def build_section(title, date_from, date_to):
-    meta_data = fetch_windsor("facebook_ads", date_from, date_to)
-    google_data = fetch_windsor("google_ads", date_from, date_to)
+    all_data = fetch_windsor(date_from, date_to)
+
+    meta_data = [row for row in all_data if is_meta(row)]
+    google_data = [row for row in all_data if is_google(row)]
 
     meta = agg(meta_data)
     google = agg(google_data)
@@ -82,10 +88,8 @@ def build_section(title, date_from, date_to):
         f"{fmt('TOTAL', total)}"
     )
 
-
 week_from = last_monday.strftime("%Y-%m-%d")
 week_to = last_sunday.strftime("%Y-%m-%d")
-
 month_from = month_start.strftime("%Y-%m-%d")
 month_to = today.strftime("%Y-%m-%d")
 
