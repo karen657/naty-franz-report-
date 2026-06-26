@@ -8,44 +8,62 @@ SLACK_CHANNEL = "p-natyfranz-ecommerce"
 
 today = datetime.today()
 
+# Semana pasada: lunes a domingo
 last_monday = today - timedelta(days=today.weekday() + 7)
 last_sunday = last_monday + timedelta(days=6)
+
+# Mes en curso: día 1 a hoy
 month_start = today.replace(day=1)
 
-METRICS = ["spend", "conversions", "conversion_value"]
-DIMENSIONS = ["source", "channel", "account_name"]
+FIELDS = [
+    "account_name",
+    "campaign",
+    "spend",
+    "conversions",
+    "conversion_value",
+]
 
-def fetch_windsor(date_from, date_to):
-    url = "https://connectors.windsor.ai/all"
+
+def fetch_windsor(connector, date_from, date_to):
+    url = f"https://connectors.windsor.ai/{connector}"
+
     params = {
         "api_key": WINDSOR_API_KEY,
         "date_from": date_from,
         "date_to": date_to,
-        "fields": ",".join(DIMENSIONS + METRICS),
+        "fields": ",".join(FIELDS),
         "account_name": "Naty Franz",
     }
+
     r = requests.get(url, params=params, timeout=30)
     r.raise_for_status()
-    rows = r.json().get("data", [])
-    print(f"Rows recibidas: {len(rows)}")
-    print(rows[:5])
-    return rows
 
-def is_meta(row):
-    txt = f"{row.get('source','')} {row.get('channel','')}".lower()
-    return any(x in txt for x in ["facebook", "meta", "instagram"])
+    data = r.json().get("data", [])
+    print(f"{connector} | {date_from} → {date_to} | filas: {len(data)}")
+    print(data[:3])
 
-def is_google(row):
-    txt = f"{row.get('source','')} {row.get('channel','')}".lower()
-    return "google" in txt
+    return data
+
+
+def to_float(value):
+    if value in [None, "", "-"]:
+        return 0
+
+    try:
+        return float(value)
+    except ValueError:
+        return 0
+
 
 def agg(rows):
-    spend = conversions = conv_value = 0
+    spend = 0
+    conversions = 0
+    conv_value = 0
 
     for row in rows:
-        spend += float(row.get("spend") or 0)
-        conversions += float(row.get("conversions") or 0)
-        conv_value += float(row.get("conversion_value") or 0)
+        spend += to_float(row.get("spend"))
+        conversions += to_float(row.get("conversions"))
+        conv_value += to_float(row.get("conversion_value"))
 
     cpa = spend / conversions if conversions else 0
     roas = conv_value / spend if spend else 0
@@ -58,38 +76,42 @@ def agg(rows):
         "roas": roas,
     }
 
-def fmt(label, d):
+
+def fmt(label, data):
     return (
         f"*{label}*\n"
-        f"  💰 Inversión: ${d['spend']:,.2f}\n"
-        f"  🛒 Conversiones: {d['conversions']:.0f}\n"
-        f"  💵 Valor conv.: ${d['conv_value']:,.2f}\n"
-        f"  📉 CPA: ${d['cpa']:,.2f}\n"
-        f"  📈 ROAS: {d['roas']:.2f}x\n"
+        f"  💰 Inversión: ${data['spend']:,.2f}\n"
+        f"  🛒 Conversiones: {data['conversions']:.0f}\n"
+        f"  💵 Valor conv.: ${data['conv_value']:,.2f}\n"
+        f"  📉 CPA: ${data['cpa']:,.2f}\n"
+        f"  📈 ROAS: {data['roas']:.2f}x\n"
     )
 
-def build_section(title, date_from, date_to):
-    all_data = fetch_windsor(date_from, date_to)
 
-    meta_data = [row for row in all_data if is_meta(row)]
-    google_data = [row for row in all_data if is_google(row)]
+def build_section(title, date_from, date_to):
+    meta_data = fetch_windsor("facebook", date_from, date_to)
+    google_data = fetch_windsor("google_ads", date_from, date_to)
 
     meta = agg(meta_data)
     google = agg(google_data)
     total = agg(meta_data + google_data)
 
+    date_from_fmt = datetime.strptime(date_from, "%Y-%m-%d").strftime("%d/%m")
+    date_to_fmt = datetime.strptime(date_to, "%Y-%m-%d").strftime("%d/%m/%Y")
+
     return (
         f"*{title}*\n"
-        f"_Período: {datetime.strptime(date_from, '%Y-%m-%d').strftime('%d/%m')} → "
-        f"{datetime.strptime(date_to, '%Y-%m-%d').strftime('%d/%m/%Y')}_\n\n"
+        f"_Período: {date_from_fmt} → {date_to_fmt}_\n\n"
         f"{fmt('Meta Ads', meta)}\n"
         f"{fmt('Google Ads', google)}\n"
         f"{'─' * 30}\n"
         f"{fmt('TOTAL', total)}"
     )
 
+
 week_from = last_monday.strftime("%Y-%m-%d")
 week_to = last_sunday.strftime("%Y-%m-%d")
+
 month_from = month_start.strftime("%Y-%m-%d")
 month_to = today.strftime("%Y-%m-%d")
 
@@ -104,12 +126,13 @@ resp = requests.post(
     "https://slack.com/api/chat.postMessage",
     headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
     json={"channel": SLACK_CHANNEL, "text": mensaje},
+    timeout=30,
 )
 
 resp.raise_for_status()
-data = resp.json()
+slack_response = resp.json()
 
-if not data.get("ok"):
-    raise Exception(f"Error de Slack: {data}")
+if not slack_response.get("ok"):
+    raise Exception(f"Error de Slack: {slack_response}")
 
 print("✅ Informe enviado a Slack")
